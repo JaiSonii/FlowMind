@@ -1,19 +1,28 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   DndContext,
-  closestCenter,
+  closestCorners,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
+  DragEndEvent,
+  DragOverEvent,
+  DragOverlay,
+  DragStartEvent,
+  pointerWithin,
 } from '@dnd-kit/core'
+import { arrayMove } from '@dnd-kit/sortable'
 import { KanbanColumn } from './KanbanColumn'
 import { TaskStatus } from '@prisma/client'
 import { Button } from '@/components/ui/button'
 import { Plus } from 'lucide-react'
 import { useUIStore } from '@/store/ui.store'
+import { deleteTaskAction, updateTaskStatusAction } from '@/components/tasks/tasks'
+import { set } from 'date-fns'
+import TrashBin from './Delete'
 
 interface Task {
   id: string
@@ -29,7 +38,7 @@ interface Task {
 interface KanbanBoardProps {
   projectId: string
   tasks: Task[]
-  onTasksUpdate: () => void
+  onTasksUpdate?: () => void
 }
 
 const COLUMNS = [
@@ -42,6 +51,13 @@ const COLUMNS = [
 export function KanbanBoard({ projectId, tasks, onTasksUpdate }: KanbanBoardProps) {
   const { setCreateTaskDialogOpen } = useUIStore()
   const [isUpdating, setIsUpdating] = useState(false)
+  const [localTasks, setLocalTasks] = useState(tasks)
+  const [activeTask, setActiveTask] = useState<Task | null>(null)
+  const[trashActive, setTrashActive] = useState(false)
+
+  useEffect(() => {
+    setLocalTasks(tasks)
+  }, [tasks])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -53,7 +69,9 @@ export function KanbanBoard({ projectId, tasks, onTasksUpdate }: KanbanBoardProp
   const tasksByStatus = COLUMNS.reduce(
     (acc, col) => ({
       ...acc,
-      [col.status]: tasks.filter((t) => t.status === col.status),
+      [col.status]: localTasks
+        .filter((t) => t.status === col.status)
+        .sort((a, b) => a.position - b.position),
     }),
     {} as Record<TaskStatus, Task[]>
   )
@@ -62,27 +80,137 @@ export function KanbanBoard({ projectId, tasks, onTasksUpdate }: KanbanBoardProp
     async (taskId: string, newStatus: TaskStatus, newPosition: number) => {
       setIsUpdating(true)
       try {
-        const response = await fetch(`/api/tasks/${taskId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            status: newStatus,
-            position: newPosition,
-          }),
-        })
-
-        if (response.ok) {
-          onTasksUpdate()
-        }
+        await updateTaskStatusAction(
+          taskId,
+          newStatus,
+          newPosition,
+          projectId
+        )
+        onTasksUpdate?.()
+      } catch (error) {
+        setLocalTasks(tasks) // Revert on failure
       } finally {
         setIsUpdating(false)
       }
     },
-    [onTasksUpdate]
+    [onTasksUpdate, tasks, projectId]
   )
 
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { active, over } = event
+    if (!over) return
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    if (activeId === overId) return
+
+    setLocalTasks((prev) => {
+      const activeTask = prev.find((t) => t.id === activeId)
+      const overTask = prev.find((t) => t.id === overId)
+
+      const activeStatus = activeTask?.status
+      const overStatus = overTask
+        ? overTask.status
+        : COLUMNS.some((col) => col.status === overId) ? (overId as TaskStatus) : null
+
+      if (!activeStatus || !overStatus || activeStatus === overStatus) {
+        return prev
+      }
+
+      const newTasks = [...prev]
+      const taskIndex = newTasks.findIndex((t) => t.id === activeId)
+
+      if (taskIndex > -1) {
+        // Optimistically move it to the new column while dragging
+        newTasks[taskIndex] = { ...newTasks[taskIndex], status: overStatus }
+      }
+
+      return newTasks
+    })
+  }, [])
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      if (!over) return
+      setActiveTask(null)
+      setTrashActive(false)
+
+      const activeId = active.id as string
+      const overId = over.id as string
+
+      const activeTask = localTasks.find((t) => t.id === activeId)
+      if (!activeTask) return
+
+      if (overId === 'trash-bin') {
+        deleteTaskAction(activeTask.id, projectId)
+        setLocalTasks(localTasks.filter((t) => t.id !== activeId))
+        onTasksUpdate?.()
+        return
+      }
+
+      const currentStatus = activeTask.status
+      let newTasks = [...localTasks]
+
+      const statusItems = newTasks
+        .filter((t) => t.status === currentStatus)
+        .sort((a, b) => a.position - b.position)
+
+      const activeIndex = statusItems.findIndex((t) => t.id === activeId)
+      let overIndex = statusItems.findIndex((t) => t.id === overId)
+
+      if (overIndex === -1 && COLUMNS.some((c) => c.status === overId)) {
+        overIndex = statusItems.length - 1
+      }
+
+      let finalPosition = activeIndex
+
+      if (activeIndex !== overIndex && overIndex !== -1) {
+        // Sort array natively based on new indices
+        const reorderedItems = arrayMove(statusItems, activeIndex, overIndex)
+
+        reorderedItems.forEach((item, index) => {
+          const taskIndex = newTasks.findIndex((t) => t.id === item.id)
+          if (taskIndex > -1) {
+            newTasks[taskIndex] = { ...newTasks[taskIndex], position: index }
+          }
+        })
+
+        finalPosition = overIndex
+        setLocalTasks(newTasks)
+      }
+
+      const originalTask = tasks.find((t) => t.id === activeId)
+      if (
+        originalTask &&
+        (originalTask.status !== currentStatus || originalTask.position !== finalPosition)
+      ) {
+        // Persist to database
+        handleTaskDrop(activeId, currentStatus, finalPosition)
+      }
+    },
+    [localTasks, tasks, handleTaskDrop]
+  )
+
+  const handleDragStart = (e: DragStartEvent) =>{
+    const activeId = e.active.id
+    setTrashActive(true)
+    setActiveTask(localTasks.find((t) => t.id === activeId) || null)
+  }
+
+  const handleDragDelete = useCallback(()=>{
+    
+  }, [])
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter}>
+    <DndContext 
+      sensors={sensors} 
+      collisionDetection={pointerWithin} 
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+      onDragStart={handleDragStart}
+    >
       <div className="flex h-[calc(100vh-16rem)] min-h-[500px] gap-6 overflow-x-auto pb-4 items-stretch">
         {COLUMNS.map((column) => (
           <div 
@@ -126,6 +254,21 @@ export function KanbanBoard({ projectId, tasks, onTasksUpdate }: KanbanBoardProp
           </Button>
         </div>
       </div>
+      <TrashBin active={trashActive}/>
+      <DragOverlay>
+        {activeTask ? (
+          <div className="p-4 border border-border rounded-lg bg-card shadow-lg w-80">
+            <h4 className="font-medium text-foreground text-sm line-clamp-2">
+              {activeTask.title}
+            </h4>
+            {activeTask.description && (
+              <p className="text-xs text-muted-foreground line-clamp-1 mt-1">
+                {activeTask.description}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }

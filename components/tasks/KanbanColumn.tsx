@@ -1,6 +1,7 @@
 'use client'
 
 import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useDroppable } from '@dnd-kit/core'
 import { TaskStatus } from '@prisma/client'
 import { KanbanCard } from './KanbanCard'
 
@@ -30,10 +31,11 @@ export function KanbanColumn({
   isUpdating,
   projectId,
 }: KanbanColumnProps) {
+  const { setNodeRef } = useDroppable({ id: status })
   const taskIds = tasks.map((t) => t.id)
 
   return (
-    <div className="flex flex-col gap-3 min-h-full h-full pb-4">
+    <div ref={setNodeRef} className="flex flex-col gap-3 min-h-full h-full pb-4">
       <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
         {tasks.map((task, index) => (
           <KanbanCard

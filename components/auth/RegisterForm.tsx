@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { Mail, Lock, User, Chrome } from 'lucide-react'
 import Link from 'next/link'
-import bcrypt from 'bcryptjs'
+import { registerUserAction } from '@/app/actions/auth'
 
 export function RegisterForm() {
   const router = useRouter()
@@ -39,24 +39,7 @@ export function RegisterForm() {
     }
 
     try {
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10)
-
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          email,
-          password: hashedPassword,
-        }),
-      })
-
-      if (!response.ok) {
-        const data = await response.json()
-        setError(data.error || 'Registration failed')
-        return
-      }
+      await registerUserAction({ name, email, password })
 
       // Sign in after successful registration
       const result = await signIn('credentials', {
@@ -71,7 +54,7 @@ export function RegisterForm() {
         setError('Failed to sign in. Please try logging in manually.')
       }
     } catch (err) {
-      setError('An error occurred. Please try again.')
+      setError(err instanceof Error ? err.message : 'An error occurred. Please try again.')
     } finally {
       setIsLoading(false)
     }

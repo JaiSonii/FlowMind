@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -27,12 +27,13 @@ import {
 } from '@/components/ui/popover'
 import { Calendar as CalendarIcon } from 'lucide-react'
 import { cn, formatDate } from '@/lib/utils'
+import { createTaskAction } from '@/components/tasks/tasks'
 
 interface CreateTaskDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
-  onCreated: () => void
+  onCreated?: () => void
 }
 
 export function CreateTaskDialog({
@@ -41,7 +42,8 @@ export function CreateTaskDialog({
   projectId,
   onCreated,
 }: CreateTaskDialogProps) {
-  const [isLoading, setIsLoading] = useState(false)
+  const [isPending, startTransition] = useTransition()
+  const isLoading = isPending
   const [error, setError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -50,37 +52,28 @@ export function CreateTaskDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
     setError(null)
 
-    try {
-      const response = await fetch(`/api/projects/${projectId}/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    startTransition(async () => {
+      try {
+        await createTaskAction({
           title,
           description,
           priority,
           projectId,
           dueDate: dueDate ? dueDate.toISOString() : null,
-        }),
-      })
+        })
 
-      if (!response.ok) {
-        throw new Error('Failed to create task')
+        setTitle('')
+        setDescription('')
+        setPriority('MEDIUM')
+        setDueDate(undefined)
+        onOpenChange(false)
+        onCreated?.()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred')
       }
-
-      setTitle('')
-      setDescription('')
-      setPriority('MEDIUM')
-      setDueDate(undefined)
-      onOpenChange(false)
-      onCreated()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setIsLoading(false)
-    }
+    })
   }
 
   return (

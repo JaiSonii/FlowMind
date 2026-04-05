@@ -28,12 +28,21 @@ import {
 import { Calendar as CalendarIcon, Trash2, Plus, GripVertical } from 'lucide-react'
 import { cn, formatDate } from '@/lib/utils'
 import { useUIStore } from '@/store/ui.store'
+import {
+  getTaskDetailsAction,
+  updateTaskDetailsAction,
+  deleteTaskAction,
+  createSubtaskAction,
+  toggleSubtaskAction,
+  deleteSubtaskAction
+} from '@/components/tasks/tasks'
 
 interface TaskDetailDialogProps {
-    onUpdated: () => void
+    projectId: string
+    onUpdated?: () => void
 }
 
-export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
+export function TaskDetailDialog({ projectId, onUpdated }: TaskDetailDialogProps) {
     const { isTaskDetailOpen, setIsTaskDetailOpen, selectedTaskId, setSelectedTaskId } = useUIStore()
 
     const [isLoading, setIsLoading] = useState(true)
@@ -55,15 +64,11 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
     const fetchTaskDetails = async () => {
         setIsLoading(true)
         try {
-            const [taskRes, subtasksRes] = await Promise.all([
-                fetch(`/api/tasks/${selectedTaskId}`),
-                fetch(`/api/tasks/${selectedTaskId}/subtasks`)
-            ])
-
-            if (taskRes.ok && subtasksRes.ok) {
-                setTask(await taskRes.json())
-                setSubtasks(await subtasksRes.json())
-            }
+            const { task, subtasks } = await getTaskDetailsAction(selectedTaskId!)
+            setTask(task)
+            setSubtasks(subtasks)
+        } catch (e) {
+            console.error('Failed to load task details')
         } finally {
             setIsLoading(false)
         }
@@ -73,12 +78,8 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
         setTask((prev: any) => ({ ...prev, [field]: value }))
 
         try {
-            const res = await fetch(`/api/tasks/${selectedTaskId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [field]: value }),
-            })
-            if (res.ok) onUpdated()
+            await updateTaskDetailsAction(selectedTaskId!, { [field]: value }, projectId)
+            onUpdated?.()
         } catch (error) {
             console.error('Failed to update task')
         }
@@ -88,11 +89,9 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
         if (!window.confirm('Are you sure you want to delete this task?')) return
         setIsSaving(true)
         try {
-            const res = await fetch(`/api/tasks/${selectedTaskId}`, { method: 'DELETE' })
-            if (res.ok) {
-                onUpdated()
-                handleClose()
-            }
+            await deleteTaskAction(selectedTaskId!, projectId)
+            onUpdated?.()
+            handleClose()
         } finally {
             setIsSaving(false)
         }
@@ -104,17 +103,12 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
         setIsSaving(true)
 
         try {
-            const res = await fetch(`/api/tasks/${selectedTaskId}/subtasks`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title: newSubtaskTitle, priority: 'MEDIUM' }),
-            })
-            if (res.ok) {
-                const newSubtask = await res.json()
-                setSubtasks([...subtasks, newSubtask])
-                setNewSubtaskTitle('')
-                onUpdated()
-            }
+            await createSubtaskAction(selectedTaskId!, newSubtaskTitle, projectId)
+            setNewSubtaskTitle('')
+            fetchTaskDetails() // Reload to get fresh timestamps
+            onUpdated?.()
+        } catch (e) {
+            console.error(e)
         } finally {
             setIsSaving(false)
         }
@@ -127,12 +121,8 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
         setSubtasks(subtasks.map(st => st.id === subtaskId ? { ...st, status: newStatus } : st))
 
         try {
-            await fetch(`/api/tasks/${subtaskId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus }),
-            })
-            onUpdated()
+            await toggleSubtaskAction(subtaskId, newStatus, projectId)
+            onUpdated?.()
         } catch {
             // Revert on failure
             setSubtasks(subtasks.map(st => st.id === subtaskId ? { ...st, status: currentStatus } : st))
@@ -141,11 +131,9 @@ export function TaskDetailDialog({ onUpdated }: TaskDetailDialogProps) {
 
     const handleDeleteSubtask = async (subtaskId: string) => {
         try {
-            const res = await fetch(`/api/tasks/${subtaskId}`, { method: 'DELETE' })
-            if (res.ok) {
-                setSubtasks(subtasks.filter(st => st.id !== subtaskId))
-                onUpdated()
-            }
+            await deleteSubtaskAction(subtaskId, projectId)
+            setSubtasks(subtasks.filter(st => st.id !== subtaskId))
+            onUpdated?.()
         } catch (e) {
             console.error(e)
         }

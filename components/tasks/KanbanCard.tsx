@@ -40,7 +40,7 @@ export function KanbanCard({ task, index, onDrop, isUpdating, projectId }: Kanba
   const { setIsTaskDetailOpen, setSelectedTaskId } = useUIStore()
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
   }
