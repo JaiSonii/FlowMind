@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { Mail, Lock, User, Chrome } from 'lucide-react'
 import Link from 'next/link'
-import { registerUserAction } from '@/app/actions/auth'
+import { registerUserAction } from '@/components/tasks/auth'
 
 export function RegisterForm() {
   const router = useRouter()
